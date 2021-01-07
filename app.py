@@ -21,12 +21,28 @@ from flask import jsonify
 from flask import request, redirect
 from flask_socketio import SocketIO
 from flask_cors import CORS
+#new for V2 vvvvv
+from ibm_watson import AssistantV2
+from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
+#new for V2 ^^^^^
+''' old V1 vvvv
 from ibm_watson import AssistantV1
+import assistant_setup
+old V1 ^^^^ '''
 from ibm_watson import SpeechToTextV1
 from ibm_watson import TextToSpeechV1
 from ibm_cloud_sdk_core import get_authenticator_from_environment
 
-import assistant_setup
+
+assistant = None
+assistant_service = None
+assistant_id = None
+
+#later - make these cookies, user session specific
+session_id = None
+voice = None
+model = None
+
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -58,25 +74,51 @@ def Welcome():
 
 @app.route('/api/conversation', methods=['POST', 'GET'])
 def getConvResponse():
-
+    global session_id, assistant_id, assistant_service
+    # load context if it exists
     convText = request.form.get('convText')
     convContext = request.form.get('context', "{}")
-    jsonContext = json.loads(convContext)
+    context = json.loads(convContext)
 
+    # create a new session if there, otherwise create
+    #new V2 vvvvv
+    if session_id == None:
+        response = assistant_service.create_session(assistant_id=assistant_id).get_result()
+        session_id = response['session_id']
+        print(f'Session created! {session_id}\n')
+
+    # coverse with WA Bot
+    input = {
+        'text': convText,
+         'options': {'alternate_intents': True, 'return_context': True, 'debug': True }
+    }    
+    response = assistantService.message(assistant_id=assistant_id, session_id=session_id, input=input).get_result()
+    #new V2 ^^^^
+    """ old V1 vvvvv
     response = assistant.message(workspace_id=workspace_id,
                                  input={'text': convText},
-                                 context=jsonContext)
-
+                                 context=context)
     response = response.get_result()
+    old V1 ^^^^^ """
+
     reponseText = response["output"]["text"]
     responseDetails = {'responseText': '... '.join(reponseText),
                        'context': response["context"]}
+
+    #delete session if explicit from user
+    if (convText == "bye"):
+        response = assistantService.delete_session(
+            assistant_id=assistant_id,
+            session_id=session_id).get_result()
+        session_id = None
+        print('Session deleted. Bye...')                       
     return jsonify(results=responseDetails)
 
 
 @app.route('/api/text-to-speech', methods=['POST'])
 def getSpeechFromText():
     inputText = request.form.get('text')
+    my_voice = request.form.get('voice', voice)
     ttsService = TextToSpeechV1()
 
     def generate():
@@ -84,7 +126,7 @@ def getSpeechFromText():
             audioOut = ttsService.synthesize(
                 inputText,
                 accept='audio/wav',
-                voice='en-US_AllisonVoice').get_result()
+                voice=my_voice).get_result()
 
             data = audioOut.content
         else:
@@ -117,14 +159,49 @@ def getTextFromSpeech():
     text_output = text_output.strip()
     return Response(response=text_output, mimetype='plain/text')
 
+#Note: this was in __main__, not a good idea, flask may not be started that way :)
+@app.before_first_request
+def before_first request():
+    global authenticator, assistant_service, assistant_id, voice, model
 
-port = os.environ.get("PORT") or os.environ.get("VCAP_APP_PORT") or 5000
-if __name__ == "__main__":
-    load_dotenv()
+    #check for stuff that must be configured. flask does load_dotenv() for us
+    stock_error = 'not found in environment, .env or .flaskenv'
+    apikey = os.environ.get('ASSISTANT_APIKEY') or None
+    if apikey == None:
+        raise ValueError(f'ASSISTANT_APIKEY {stock_error}')
+    assistant_id = os.environ.get('ASSISTANT_ID')
+    if assistant_id == None:
+        raise ValueError(f'ASSISTANT_ID {stock_error}')
+    url = os.environ.get('ASSISTANT_URL') or None
+    if url == None:
+        raise ValueError(f'ASSISTANT_URL {stock_error}')
+    assistant_version = os.getenv("ASSISTANT_VERSION") or None
+    if assistant_version == None:
+        raise ValueError(f'ASSISTANT_VERSION {stock_error}')
 
+    voice = os.getenv("TEXT_TO_SPEECH_VOICE") or 'en-US_AllisonVoice'
+    model = os.getenv("SPEECH_TO_TEXT_MODEL") or 'en-US_BroadbandModel'
+
+    print(f'version {assistant_version} key: {apikey} url: {url}')
+    print(f'model {model} voice: {apikvoiceey} assistant_version: {assistant_version}')
+    #new V2 vvvvv
+
+    #get authenticator using apikey, get assisant_service, set url
+    authenticator = IAMAuthenticator(apikey)
+    print(f'authenticator {authenticator}')
+ 
+    assistant_service = AssistantV2( authenticator=authenticator, version=assistant_version)
+    assistant_service.set_service_url(url)
+    #new V2 ^^^^
+    """ old V1 vvvvv
+    load_dotenv(verbose=True)
     # SDK is currently confused. Only sees 'conversation' for CloudFoundry.
     authenticator = (get_authenticator_from_environment('assistant') or
                      get_authenticator_from_environment('conversation'))
-    assistant = AssistantV1(version="2019-11-06", authenticator=authenticator)
+
+    assistant = AssistantV1(version=os.getenv("ASSISTANT_DATE"), authenticator=authenticator)
     workspace_id = assistant_setup.init_skill(assistant)
+    old V1 ^^^^^ """
+
+    port = os.environ.get("PORT") or os.environ.get("VCAP_APP_PORT") or 5000
     socketio.run(app, host='0.0.0.0', port=int(port))
