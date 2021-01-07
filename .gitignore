@@ -177,3 +177,9 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+.DS_Store
+audio/audio-file.flac
+pokeapi.sh
+old/app.py
+old/assistant_setup.py
+hack.py
