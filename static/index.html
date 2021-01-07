@@ -16,13 +16,13 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Airtel WVA Bot">
-  <link rel="apple-touch-icon-precomposed" href="static/images/ios-desktop.png">
+  <link rel="apple-touch-icon-precomposed" href="static/img/ios-desktop.png">
 
   <!-- Tile icon for Win8 (144x144 + tile color) -->
   <meta name="msapplication-TileImage" content="images/touch/ms-touch-icon-144x144-precomposed.png">
   <meta name="msapplication-TileColor" content="#3372DF">
 
-  <link rel="shortcut icon" href="./static/images/favicon.png">
+  <link rel="shortcut icon" href="./static/img/amerafav-128x139.png">
 
   <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
   <link rel="stylesheet" href="https://code.getmdl.io/1.2.1/material.red-orange.min.css" />
@@ -61,15 +61,19 @@
           </div>
         </div>
       </div>
-
     </main>
   </div>
+  <!-- This is birdseed for custom languages -->
+  <div id="language" style="display:none">
+      <input id="speech_to_text_model">en-US_BroadbandModel/input>
+      <input id="text_to_speech_voice">en-US_AllisonVoice</input>
+  </div>
   <p><audio id="audio" controls></audio></p>
-<script defer src="https://code.getmdl.io/1.2.1/material.min.js"></script>
-<script type="text/javascript" src="./static/jq/jquery-3.2.1.min.js"></script>
-<script type="text/javascript" src="./static/scripts/script.js"></script>
-<script type="text/javascript" src="./static/scripts/recorder.js"></script>
-<script type="text/javascript" src="./static/scripts/recordWorker.js"></script>
+  <script defer src="https://code.getmdl.io/1.2.1/material.min.js"></script>
+  <script type="text/javascript" src="./static/jq/jquery-3.2.1.min.js"></script>
+  <script type="text/javascript" src="./static/scripts/script.js"></script>
+  <script type="text/javascript" src="./static/scripts/recorder.js"></script>
+  <script type="text/javascript" src="./static/scripts/recordWorker.js"></script>
 </body>
 
 </html>
