@@ -28,15 +28,17 @@ from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 ''' old V1 vvvv
 from ibm_watson import AssistantV1
 import assistant_setup
+from ibm_cloud_sdk_core import get_authenticator_from_environment
 old V1 ^^^^ '''
+#speech-text APIS are still at V1 for now
 from ibm_watson import SpeechToTextV1
 from ibm_watson import TextToSpeechV1
-from ibm_cloud_sdk_core import get_authenticator_from_environment
 
 
-assistant = None
-assistant_service = None
+assistant_svc = None
 assistant_id = None
+speech_to_text_svc = None
+text_to_speech_svc = None
 
 #later - make these cookies, user session specific
 session_id = None
@@ -74,29 +76,32 @@ def Welcome():
 
 @app.route('/api/conversation', methods=['POST', 'GET'])
 def getConvResponse():
-    global session_id, assistant_id, assistant_service
-    # load context if it exists
-    convText = request.form.get('convText')
-    convContext = request.form.get('context', "{}")
-    context = json.loads(convContext)
+    global session_id, assistant_id, assistant_svc
+    conv_text = request.form.get('convText')
 
     # create a new session if there, otherwise create
     #new V2 vvvvv
     if session_id == None:
-        response = assistant_service.create_session(assistant_id=assistant_id).get_result()
+        response = assistant_svc.create_session(assistant_id=assistant_id).get_result()
         session_id = response['session_id']
         print(f'Session created! {session_id}\n')
 
     # coverse with WA Bot
     input = {
-        'text': convText,
+        'text': conv_text,
          'options': {'alternate_intents': True, 'return_context': True, 'debug': True }
     }    
-    response = assistantService.message(assistant_id=assistant_id, session_id=session_id, input=input).get_result()
+    response = assistant_svc.message(
+        assistant_id=assistant_id, 
+        session_id=session_id, 
+        input=input).get_result()
     #new V2 ^^^^
     """ old V1 vvvvv
+    # load context if it exists
+    convContext = request.form.get('context', "{}")
+    context = json.loads(convContext)
     response = assistant.message(workspace_id=workspace_id,
-                                 input={'text': convText},
+                                 input={'text': conv_text},
                                  context=context)
     response = response.get_result()
     old V1 ^^^^^ """
@@ -106,8 +111,8 @@ def getConvResponse():
                        'context': response["context"]}
 
     #delete session if explicit from user
-    if (convText == "bye"):
-        response = assistantService.delete_session(
+    if (conv_text == "bye"):
+        response = assistant_svc.delete_session(
             assistant_id=assistant_id,
             session_id=session_id).get_result()
         session_id = None
@@ -117,13 +122,13 @@ def getConvResponse():
 
 @app.route('/api/text-to-speech', methods=['POST'])
 def getSpeechFromText():
+    global text_to_speech_svc
     inputText = request.form.get('text')
     my_voice = request.form.get('voice', voice)
-    ttsService = TextToSpeechV1()
 
     def generate():
         if inputText:
-            audioOut = ttsService.synthesize(
+            audioOut = text_to_speech_svc.synthesize(
                 inputText,
                 accept='audio/wav',
                 voice=my_voice).get_result()
@@ -140,11 +145,11 @@ def getSpeechFromText():
 
 @app.route('/api/speech-to-text', methods=['POST'])
 def getTextFromSpeech():
-
-    sttService = SpeechToTextV1()
-
-    response = sttService.recognize(
-            audio=request.get_data(cache=False),
+    global speech_to_text_svc
+    audio = request.get_data(cache=False)
+    print(f'audio size is {len(audio)}')
+    response = speech_to_text_svc.recognize(
+            audio=audio,
             content_type='audio/wav',
             timestamps=True,
             word_confidence=True,
@@ -161,37 +166,50 @@ def getTextFromSpeech():
 
 #Note: this was in __main__, not a good idea, flask may not be started that way :)
 @app.before_first_request
-def before_first request():
-    global authenticator, assistant_service, assistant_id, voice, model
-
-    #check for stuff that must be configured. flask does load_dotenv() for us
-    stock_error = 'not found in environment, .env or .flaskenv'
-    apikey = os.environ.get('ASSISTANT_APIKEY') or None
-    if apikey == None:
-        raise ValueError(f'ASSISTANT_APIKEY {stock_error}')
-    assistant_id = os.environ.get('ASSISTANT_ID')
-    if assistant_id == None:
-        raise ValueError(f'ASSISTANT_ID {stock_error}')
-    url = os.environ.get('ASSISTANT_URL') or None
-    if url == None:
-        raise ValueError(f'ASSISTANT_URL {stock_error}')
-    assistant_version = os.getenv("ASSISTANT_VERSION") or None
-    if assistant_version == None:
-        raise ValueError(f'ASSISTANT_VERSION {stock_error}')
-
-    voice = os.getenv("TEXT_TO_SPEECH_VOICE") or 'en-US_AllisonVoice'
-    model = os.getenv("SPEECH_TO_TEXT_MODEL") or 'en-US_BroadbandModel'
-
-    print(f'version {assistant_version} key: {apikey} url: {url}')
-    print(f'model {model} voice: {apikvoiceey} assistant_version: {assistant_version}')
+def before_first_request():
+    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model
     #new V2 vvvvv
+    #check for mandatory configuration. flask does load_dotenv() for us
 
-    #get authenticator using apikey, get assisant_service, set url
-    authenticator = IAMAuthenticator(apikey)
-    print(f'authenticator {authenticator}')
+    #Watson Assitant
+    wa_apikey = checkenv('ASSISTANT_APIKEY')
+    wa_url = checkenv('ASSISTANT_URL')
+    assistant_id = checkenv('ASSISTANT_ID')
+    assistant_version = checkenv("ASSISTANT_VERSION")
+    authenticator = IAMAuthenticator(wa_apikey)
+    assistant_svc = AssistantV2( authenticator=authenticator, version=assistant_version)
+    assistant_svc.set_service_url(wa_url)
+
+    print('before_first_request\nConfig:')
+    print(f'   Watson version {assistant_version} key: {wa_apikey}')
+    print(f'   Watson url: {wa_url}')
+
+    #Speech to Text
+    s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
+    s2t_url = checkenv('SPEECH_TO_TEXT_URL')
+    model = checkenv("SPEECH_TO_TEXT_MODEL", 'en-US_BroadbandModel')
+    authenticator = IAMAuthenticator(s2t_apikey)
+    speech_to_text_svc = SpeechToTextV1(authenticator)
+    speech_to_text_svc.set_service_url(s2t_url)
+
+    print(f'   speech_to_text key: {s2t_apikey}')
+    print(f'   speech_to_text url: {s2t_url}')
+
+    # Text to Speech
+    t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
+    t2s_url = checkenv('TEXT_TO_SPEECH_URL')
+    voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
+    authenticator = IAMAuthenticator(t2s_apikey)
+    text_to_speech_svc = TextToSpeechV1(authenticator)
+    text_to_speech_svc.set_service_url(t2s_url)
+
+    print(f'   text_to_speech key: {s2t_url}')
+    print(f'   text_to_speech url: {t2s_url}')
+
+    print(f'   model: {model} voice: {voice} ')
  
-    assistant_service = AssistantV2( authenticator=authenticator, version=assistant_version)
-    assistant_service.set_service_url(url)
+
+    print('before_first_request(exit)')
     #new V2 ^^^^
     """ old V1 vvvvv
     load_dotenv(verbose=True)
@@ -203,5 +221,19 @@ def before_first request():
     workspace_id = assistant_setup.init_skill(assistant)
     old V1 ^^^^^ """
 
+def checkenv(checkfor, default=None):
+    required = os.environ.get(checkfor) or None
+    if required != None:
+        return required
+    elif default != None:
+        return default
+    raise ValueError(f'{checkfor} not found in: environment, .env or .flaskenv - Correct config')
+
+
+
+if __name__ == "__main__":
+    print('hello from __main__')
+    load_dotenv(verbose=True)
     port = os.environ.get("PORT") or os.environ.get("VCAP_APP_PORT") or 5000
-    socketio.run(app, host='0.0.0.0', port=int(port))
+    #socketio.run(app, host='0.0.0.0', port=int(port))
+    app.run(debug=True)
