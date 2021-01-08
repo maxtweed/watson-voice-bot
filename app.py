@@ -73,18 +73,13 @@ def before_request():
 def Welcome():
     return app.send_static_file('index.html')
 
-
 @app.route('/api/conversation', methods=['POST', 'GET'])
 def getConvResponse():
     global session_id, assistant_id, assistant_svc
-    conv_text = request.form.get('convText')
+    conv_text = request.form.get('convText') or 'hello'
 
-    # create a new session if there, otherwise create
     #new V2 vvvvv
-    if session_id == None:
-        response = assistant_svc.create_session(assistant_id=assistant_id).get_result()
-        session_id = response['session_id']
-        print(f'Session created! {session_id}\n')
+    session_id = get_session()
 
     # coverse with WA Bot
     input = {
@@ -106,18 +101,31 @@ def getConvResponse():
     response = response.get_result()
     old V1 ^^^^^ """
 
-    reponseText = response["output"]["text"]
-    responseDetails = {'responseText': '... '.join(reponseText),
-                       'context': response["context"]}
+    print(json.dumps(response, indent=2))
+
+    response_txt = []
+    for item in response["output"]["generic"]:
+        response_txt.append(item["text"])
+    if isinstance(response_txt, list):
+        response_txt = '... '.join(response_txt)
+    response_details = {
+        'responseText': response_txt,
+        'context': response["context"]
+    }
+
+
+    #intents = response["output"]["intents"]
+    #for intent in intents:
+    #    print(f'intent:  {intent["intent"]} confidence: {intent["confidence"]}')
+    #entities = response["output"]["entities"]
+    #for entity in entities:
+    #    print(f'entity:  {entity["intent"]} confidence: {entity["confidence"]}')
+    #print(f'skill {response["output"]["skills"]}')
 
     #delete session if explicit from user
     if (conv_text == "bye"):
-        response = assistant_svc.delete_session(
-            assistant_id=assistant_id,
-            session_id=session_id).get_result()
-        session_id = None
-        print('Session deleted. Bye...')                       
-    return jsonify(results=responseDetails)
+        delete_session()
+    return jsonify(results=response_details)
 
 
 @app.route('/api/text-to-speech', methods=['POST'])
@@ -177,12 +185,18 @@ def before_first_request():
     assistant_id = checkenv('ASSISTANT_ID')
     assistant_version = checkenv("ASSISTANT_VERSION")
     authenticator = IAMAuthenticator(wa_apikey)
+
+    print('Config:')
+    print(f'   Watson version: {assistant_version} key: {wa_apikey}')
+    print(f'   Watson url: {wa_url}')
     assistant_svc = AssistantV2( authenticator=authenticator, version=assistant_version)
     assistant_svc.set_service_url(wa_url)
 
-    print('before_first_request\nConfig:')
-    print(f'   Watson version {assistant_version} key: {wa_apikey}')
-    print(f'   Watson url: {wa_url}')
+    #remove - testing
+    '''
+    get_session()
+    delete_session()
+    '''
 
     #Speech to Text
     s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
@@ -209,7 +223,6 @@ def before_first_request():
     print(f'   model: {model} voice: {voice} ')
  
 
-    print('before_first_request(exit)')
     #new V2 ^^^^
     """ old V1 vvvvv
     load_dotenv(verbose=True)
@@ -229,11 +242,31 @@ def checkenv(checkfor, default=None):
         return default
     raise ValueError(f'{checkfor} not found in: environment, .env or .flaskenv - Correct config')
 
+# create a new session if there, otherwise create
+def get_session():
+    global session_id
+    if session_id != None:
+        return session_id
+    response = assistant_svc.create_session(assistant_id=assistant_id).get_result()
+    session_id = response['session_id']
+    print(f'Session created! {session_id}')
+    return session_id
+
+def delete_session():
+    global session_id
+    if session_id == None:
+        return
+    assistant_svc.delete_session(
+        assistant_id=assistant_id,
+        session_id=session_id).get_result()
+    print(f'Session {session_id}deleted. Bye...')                       
+    session_id = None
+
 
 
 if __name__ == "__main__":
     print('hello from __main__')
     load_dotenv(verbose=True)
     port = os.environ.get("PORT") or os.environ.get("VCAP_APP_PORT") or 5000
-    #socketio.run(app, host='0.0.0.0', port=int(port))
+    socketio.run(app, host='0.0.0.0', port=int(port))
     app.run(debug=True)
