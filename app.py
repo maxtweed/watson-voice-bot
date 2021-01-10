@@ -113,15 +113,6 @@ def getConvResponse():
         'context': response["context"]
     }
 
-
-    #intents = response["output"]["intents"]
-    #for intent in intents:
-    #    print(f'intent:  {intent["intent"]} confidence: {intent["confidence"]}')
-    #entities = response["output"]["entities"]
-    #for entity in entities:
-    #    print(f'entity:  {entity["intent"]} confidence: {entity["confidence"]}')
-    #print(f'skill {response["output"]["skills"]}')
-
     #delete session if explicit from user
     if (conv_text == "bye"):
         delete_session()
@@ -129,19 +120,31 @@ def getConvResponse():
 
 
 @app.route('/api/text-to-speech', methods=['POST'])
-def getSpeechFromText():
+def get_speech_from_text():
     global text_to_speech_svc
-    inputText = request.form.get('text')
+    input_text = request.form.get('text')
     my_voice = request.form.get('voice', voice)
+    print(f'get_speech_from_text - input: {input_text} voice: {my_voice}')
 
     def generate():
-        if inputText:
-            audioOut = text_to_speech_svc.synthesize(
-                inputText,
+        '''
+        synthesize(self,
+        text: str,
+        *,
+        accept: str = None,
+        voice: str = None,
+        customization_id: str = None,
+        **kwargs
+    ) -> DetailedResponse
+        '''
+        if input_text:
+            audio_out = text_to_speech_svc.synthesize(
+                text=input_text,
                 accept='audio/wav',
                 voice=my_voice).get_result()
 
-            data = audioOut.content
+            print(json.dumps(audio_out, indent=2))
+            data = audio_out.content
         else:
             print("Empty response")
             data = "I have no response to that."
@@ -181,7 +184,7 @@ def before_first_request():
 
     #Watson Assitant
     wa_apikey = checkenv('ASSISTANT_APIKEY')
-    wa_url = checkenv('ASSISTANT_URL')
+    wa_url = checkenv('ASSISTANT_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
     assistant_id = checkenv('ASSISTANT_ID')
     assistant_version = checkenv("ASSISTANT_VERSION")
     authenticator = IAMAuthenticator(wa_apikey)
@@ -192,15 +195,9 @@ def before_first_request():
     assistant_svc = AssistantV2( authenticator=authenticator, version=assistant_version)
     assistant_svc.set_service_url(wa_url)
 
-    #remove - testing
-    '''
-    get_session()
-    delete_session()
-    '''
-
     #Speech to Text
     s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
-    s2t_url = checkenv('SPEECH_TO_TEXT_URL')
+    s2t_url = checkenv('SPEECH_TO_TEXT_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
     model = checkenv("SPEECH_TO_TEXT_MODEL", 'en-US_BroadbandModel')
     authenticator = IAMAuthenticator(s2t_apikey)
     speech_to_text_svc = SpeechToTextV1(authenticator)
@@ -211,13 +208,13 @@ def before_first_request():
 
     # Text to Speech
     t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
-    t2s_url = checkenv('TEXT_TO_SPEECH_URL')
+    t2s_url = checkenv('TEXT_TO_SPEECH_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
     voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
     authenticator = IAMAuthenticator(t2s_apikey)
     text_to_speech_svc = TextToSpeechV1(authenticator)
     text_to_speech_svc.set_service_url(t2s_url)
 
-    print(f'   text_to_speech key: {s2t_url}')
+    print(f'   text_to_speech key: {t2s_apikey}')
     print(f'   text_to_speech url: {t2s_url}')
 
     print(f'   model: {model} voice: {voice} ')
