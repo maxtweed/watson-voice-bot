@@ -25,11 +25,6 @@ from flask_cors import CORS
 from ibm_watson import AssistantV2
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 #new for V2 ^^^^^
-''' old V1 vvvv
-from ibm_watson import AssistantV1
-import assistant_setup
-from ibm_cloud_sdk_core import get_authenticator_from_environment
-old V1 ^^^^ '''
 #speech-text APIS are still at V1 for now
 from ibm_watson import SpeechToTextV1
 from ibm_watson import TextToSpeechV1
@@ -78,7 +73,6 @@ def getConvResponse():
     global session_id, assistant_id, assistant_svc
     conv_text = request.form.get('convText') or 'hello'
 
-    #new V2 vvvvv
     session_id = get_session()
 
     # coverse with WA Bot
@@ -90,18 +84,8 @@ def getConvResponse():
         assistant_id=assistant_id, 
         session_id=session_id, 
         input=input).get_result()
-    #new V2 ^^^^
-    """ old V1 vvvvv
-    # load context if it exists
-    convContext = request.form.get('context', "{}")
-    context = json.loads(convContext)
-    response = assistant.message(workspace_id=workspace_id,
-                                 input={'text': conv_text},
-                                 context=context)
-    response = response.get_result()
-    old V1 ^^^^^ """
 
-    print(json.dumps(response, indent=2))
+    #print(json.dumps(response, indent=2))
 
     response_txt = []
     for item in response["output"]["generic"]:
@@ -122,28 +106,19 @@ def getConvResponse():
 @app.route('/api/text-to-speech', methods=['POST'])
 def get_speech_from_text():
     global text_to_speech_svc
+
     input_text = request.form.get('text')
     my_voice = request.form.get('voice', voice)
-    print(f'get_speech_from_text - input: {input_text} voice: {my_voice}')
+    print(f'get_speech_from_text - input: {input_text} len {len(input_text)} voice: {my_voice}')
 
     def generate():
-        '''
-        synthesize(self,
-        text: str,
-        *,
-        accept: str = None,
-        voice: str = None,
-        customization_id: str = None,
-        **kwargs
-    ) -> DetailedResponse
-        '''
         if input_text:
             audio_out = text_to_speech_svc.synthesize(
                 text=input_text,
                 accept='audio/wav',
                 voice=my_voice).get_result()
 
-            print(json.dumps(audio_out, indent=2))
+            print(f'audio len {len(audio_out.content)}')
             data = audio_out.content
         else:
             print("Empty response")
@@ -179,12 +154,17 @@ def getTextFromSpeech():
 @app.before_first_request
 def before_first_request():
     global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model
-    #new V2 vvvvv
+
     #check for mandatory configuration. flask does load_dotenv() for us
+
+    #Note: some of the  API Details supplied by IBM append the version and key details.  
+    # The IBM implemnation passes the key in as a parameter and builds up the 
+    # complete URL.  If you pass in what is supplied, version and key are  duplicated and causes 
+    # errors.  To avoid duplication and an invlaid URL,  truncate the version and everyting after it.
 
     #Watson Assitant
     wa_apikey = checkenv('ASSISTANT_APIKEY')
-    wa_url = checkenv('ASSISTANT_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
+    wa_url = checkenv('ASSISTANT_URL').split('/v')[0] #truncate version
     assistant_id = checkenv('ASSISTANT_ID')
     assistant_version = checkenv("ASSISTANT_VERSION")
     authenticator = IAMAuthenticator(wa_apikey)
@@ -197,7 +177,7 @@ def before_first_request():
 
     #Speech to Text
     s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
-    s2t_url = checkenv('SPEECH_TO_TEXT_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
+    s2t_url = checkenv('SPEECH_TO_TEXT_URL').split('/v')[0] #truncate version
     model = checkenv("SPEECH_TO_TEXT_MODEL", 'en-US_BroadbandModel')
     authenticator = IAMAuthenticator(s2t_apikey)
     speech_to_text_svc = SpeechToTextV1(authenticator)
@@ -208,7 +188,7 @@ def before_first_request():
 
     # Text to Speech
     t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
-    t2s_url = checkenv('TEXT_TO_SPEECH_URL').split('/v')[0] #truncate version and after, supplied by API, avoid duplication
+    t2s_url = checkenv('TEXT_TO_SPEECH_URL').split('/v')[0] #truncate version 
     voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
     authenticator = IAMAuthenticator(t2s_apikey)
     text_to_speech_svc = TextToSpeechV1(authenticator)
@@ -218,19 +198,8 @@ def before_first_request():
     print(f'   text_to_speech url: {t2s_url}')
 
     print(f'   model: {model} voice: {voice} ')
- 
 
-    #new V2 ^^^^
-    """ old V1 vvvvv
-    load_dotenv(verbose=True)
-    # SDK is currently confused. Only sees 'conversation' for CloudFoundry.
-    authenticator = (get_authenticator_from_environment('assistant') or
-                     get_authenticator_from_environment('conversation'))
-
-    assistant = AssistantV1(version=os.getenv("ASSISTANT_DATE"), authenticator=authenticator)
-    workspace_id = assistant_setup.init_skill(assistant)
-    old V1 ^^^^^ """
-
+# get from environment, default or exception
 def checkenv(checkfor, default=None):
     required = os.environ.get(checkfor) or None
     if required != None:
