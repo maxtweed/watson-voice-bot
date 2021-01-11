@@ -228,7 +228,7 @@ def get_session():
     now = datetime.now()
     elapsed = now - last_access
     if elapsed.total_seconds() > assitant_timeout:
-        delete_session()
+        session_id = None   #no need to delete, its gone
 
 
     if session_id != None:
