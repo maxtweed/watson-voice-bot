@@ -15,6 +15,7 @@
 
 import json
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask, Response
 from flask import jsonify
@@ -40,6 +41,8 @@ session_id = None
 voice = None
 model = None
 
+last_access = None   
+assitant_timeout = 255
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -80,10 +83,18 @@ def getConvResponse():
         'text': conv_text,
          'options': {'alternate_intents': True, 'return_context': True, 'debug': True }
     }    
-    response = assistant_svc.message(
-        assistant_id=assistant_id, 
-        session_id=session_id, 
-        input=input).get_result()
+    try:
+        response = assistant_svc.message(
+            assistant_id=assistant_id, 
+            session_id=session_id, 
+            input=input).get_result()
+    except:
+        delete_session()
+        return jsonify(results={
+            'responseText': 'session failed, retry',
+            'context': ''
+        })
+
 
     #print(json.dumps(response, indent=2))
 
@@ -153,7 +164,7 @@ def getTextFromSpeech():
 #Note: this was in __main__, not a good idea, flask may not be started that way :)
 @app.before_first_request
 def before_first_request():
-    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model
+    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model, last_access, assitant_timeout
 
     #check for mandatory configuration. flask does load_dotenv() for us
 
@@ -168,6 +179,9 @@ def before_first_request():
     assistant_id = checkenv('ASSISTANT_ID')
     assistant_version = checkenv("ASSISTANT_VERSION")
     authenticator = IAMAuthenticator(wa_apikey)
+    assitant_timeout = int(checkenv("ASSISTANT_TIMEOUT", 255))
+    last_access = datetime.now() - timedelta(seconds=assitant_timeout + 10)   
+
 
     print('Config:')
     print(f'   Watson version: {assistant_version} key: {wa_apikey}')
@@ -210,7 +224,13 @@ def checkenv(checkfor, default=None):
 
 # create a new session if there, otherwise create
 def get_session():
-    global session_id
+    global session_id, last_access, assitant_timeout
+    now = datetime.now()
+    elapsed = now - last_access
+    if elapsed.total_seconds() > assitant_timeout:
+        delete_session()
+
+
     if session_id != None:
         return session_id
     response = assistant_svc.create_session(assistant_id=assistant_id).get_result()
@@ -222,10 +242,13 @@ def delete_session():
     global session_id
     if session_id == None:
         return
-    assistant_svc.delete_session(
-        assistant_id=assistant_id,
-        session_id=session_id).get_result()
-    print(f'Session {session_id}deleted. Bye...')                       
+    try:
+        assistant_svc.delete_session(
+            assistant_id=assistant_id,
+            session_id=session_id).get_result()
+        print(f'Session {session_id}deleted. Bye...')
+    except:
+        pass                    
     session_id = None
 
 
