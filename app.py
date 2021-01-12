@@ -31,25 +31,147 @@ from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from ibm_watson import SpeechToTextV1
 from ibm_watson import TextToSpeechV1
 
+# get from environment, default or exception
+def checkenv(checkfor, default=None):
+    required = os.environ.get(checkfor) or None
+    if required != None:
+        return required
+    elif default != None:
+        return default
+    raise ValueError(f'{checkfor} not found in: environment, .env or .flaskenv - Correct config')     
 
-assistant_svc = None
-assistant_id = None
-speech_to_text_svc = None
-text_to_speech_svc = None
+'''
+WatsonConnector ia a collection of API objects and a chat recorder utility.
+The API objects are shared by all users you may have
+'''
+class WatsonConnector:
+    def __init__(self):
+        pass #do it all after Flask loaded, .flaskenv pulled in
 
-#later - make these cookies, user session specific
-session_id = None
-voice = None
-model = None
+    def load_before(self):
+        #check for mandatory configuration. 
 
-last_access = None   
-assitant_timeout = 255
-assistant_record_questions = False
-assistant_chatlog = ''
+        #Note: some of the  API Details supplied by IBM append the version and key details.  
+        # The IBM implemnation passes the key in as a parameter and builds up the 
+        # complete URL.  If you pass in what is supplied, version and key are  duplicated and causes 
+        # errors.  To avoid duplication and an invlaid URL,  truncate the version and everyting after it.
+
+        #Watson Assitant
+        self.wa_apikey = checkenv('ASSISTANT_APIKEY')
+        self.wa_url = checkenv('ASSISTANT_URL').split('/v')[0] #truncate version
+        self.assistant_id = checkenv('ASSISTANT_ID')
+        self.assistant_version = checkenv("ASSISTANT_VERSION")
+        authenticator = IAMAuthenticator(self.wa_apikey)
+        record = checkenv("ASSISTANT_RECORD", "NO").lower()
+        if record[0] in ['n', 'y', 'u']: # record n-none, y-yes to all, u- yes to unkown(Watson does not recognize)
+            self.record_questions = record[0]
+            self.chatlog = checkenv("ASSISTANT_RECORD_FILE", 'chatlog.csv')
+            Path(self.chatlog).touch() #if create/access problems File???Error gets raised now
+        else:
+            self.record_questions = 'n'
+
+
+        print('Config:')
+        print(f'   Watson version: {self.assistant_version} key: {self.wa_apikey}')
+        print(f'   Watson url: {self.wa_url}')
+        self.assistant_api = AssistantV2( authenticator=authenticator, version=self.assistant_version)
+        self.assistant_api.set_service_url(self.wa_url)
+
+        #Speech to Text
+        self.s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
+        self.s2t_url = checkenv('SPEECH_TO_TEXT_URL').split('/v')[0] #truncate version
+        authenticator = IAMAuthenticator(self.s2t_apikey)
+        self.speech_to_text = SpeechToTextV1(authenticator)
+        self.speech_to_text.set_service_url(self.s2t_url)
+
+        print(f'   speech_to_text key: {self.s2t_apikey}')
+        print(f'   speech_to_text url: {self.s2t_url}')
+
+        # Text to Speech
+        self.t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
+        self.t2s_url = checkenv('TEXT_TO_SPEECH_URL').split('/v')[0] #truncate version 
+        authenticator = IAMAuthenticator(self.t2s_apikey)
+        self.text_to_speech = TextToSpeechV1(authenticator)
+        self.text_to_speech.set_service_url(self.t2s_url)
+
+        print(f'   text_to_speech key: {self.t2s_apikey}')
+        print(f'   text_to_speech url: {self.t2s_url}')
+
+
+
+
+    def record_chat(self, conv_text, response_txt, entities):
+        if self.record_questions == 'n':
+            return
+        elif self.record_questions == 'u' and len(entities) <= 0:
+            return
+        with open(self.chatlog,'a') as fd:
+            # Watson identified, we want to know what and confidence
+            if len(entities) > 0:
+                ln = f'{conv_text},{response_txt}'
+                news = [f'{entity["entity"]}:{entity["value"]}:{entity["confidence"]}' for entity in entities]
+                ln += ',' + ','.join(news)
+            # request was unidentified, don't need to know response text
+            else:
+                ln = conv_text
+    
+            ln.replace('\n', ' ')
+            ln.replace(',', '|')
+            fd.write(f'{ln}\n')        
+
+'''
+WatsonSession is a long running session between a specific user and the Watson Assistant.
+The sessions have context and timpout logic
+'''
+
+class WatsonSession:
+    def __init__(self, watson_connector):
+        self.wc = watson_connector
+        self.session_id = None
+        pass #do rest after Flask loaded, .flaskenv pulled in
+
+    def load_before(self):
+        self.timeout = int(checkenv("ASSISTANT_TIMEOUT", 255))
+        self.last_access = datetime.now() - timedelta(seconds=self.timeout + 10)   
+        self.voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
+        self.model = checkenv("SPEECH_TO_TEXT_MODEL", 'en-US_BroadbandModel')
+        print(f'   model: {self.model} voice: {self.voice} ')
+
+
+    # create a new session if not there, otherwise return active
+    def get_session(self):
+        now = datetime.now()
+        elapsed = now - self.last_access
+        if elapsed.total_seconds() > self.timeout:
+            self.session_id = None   #no need to delete, its gone already
+
+        self.last_access = now
+
+        if self.session_id != None:
+            return self.session_id
+        response = wconn.assistant_api.create_session(assistant_id=wconn.assistant_id).get_result()
+        self.session_id = response['session_id']
+        print(f'Session created! {self.session_id}')
+        return self.session_id
+
+    def delete_session(self):
+        if self.session_id == None:
+            return
+        try:
+            wconn.assistant_api.delete_session(
+                assistant_id=wconn.assistant_id,
+                session_id=self.session_id).get_result()
+            print(f'Session {self.session_id}deleted. Bye...')
+        except:
+            pass                    
+        self.session_id = None
+
 
 app = Flask(__name__)
 socketio = SocketIO(app)
 CORS(app)
+wconn = WatsonConnector()
+wsess = WatsonSession(wconn)
 
 
 # Redirect http to https on CloudFoundry
@@ -76,10 +198,8 @@ def Welcome():
 
 @app.route('/api/conversation', methods=['POST', 'GET'])
 def getConvResponse():
-    global session_id, assistant_id, assistant_svc
+    #global session_id, assistant_id, assistant_api
     conv_text = request.form.get('convText') or 'hello'
-
-    session_id = get_session()
 
     # coverse with WA Bot
     input = {
@@ -87,12 +207,12 @@ def getConvResponse():
          'options': {'alternate_intents': True, 'return_context': True, 'debug': True }
     }    
     try:
-        response = assistant_svc.message(
-            assistant_id=assistant_id, 
-            session_id=session_id, 
+        response = wconn.assistant_api.message(
+            assistant_id=wconn.assistant_id, 
+            session_id=wsess.get_session(), 
             input=input).get_result()
     except:
-        delete_session()
+        wsess.delete_session()
         return jsonify(results={
             'responseText': 'session failed, retry',
             'context': ''
@@ -111,26 +231,25 @@ def getConvResponse():
         'context': response["context"]
     }
 
-    record_chat(conv_text, response_txt, response["output"]["entities"])
+    wconn.record_chat(conv_text, response_txt, response["output"]["entities"])
 
 
     #delete session if explicit from user
     if (conv_text == "bye"):
-        delete_session()
+        wsess.delete_session()
     return jsonify(results=response_details)
 
 
 @app.route('/api/text-to-speech', methods=['POST'])
 def get_speech_from_text():
-    global text_to_speech_svc
 
     input_text = request.form.get('text')
-    my_voice = request.form.get('voice', voice)
+    my_voice = request.form.get('voice', wsess.voice)
     print(f'get_speech_from_text - input: {input_text} len {len(input_text)} voice: {my_voice}')
 
     def generate():
         if input_text:
-            audio_out = text_to_speech_svc.synthesize(
+            audio_out = wconn.text_to_speech.synthesize(
                 text=input_text,
                 accept='audio/wav',
                 voice=my_voice).get_result()
@@ -147,10 +266,9 @@ def get_speech_from_text():
 
 @app.route('/api/speech-to-text', methods=['POST'])
 def getTextFromSpeech():
-    global speech_to_text_svc
     audio = request.get_data(cache=False)
     print(f'audio size is {len(audio)}')
-    response = speech_to_text_svc.recognize(
+    response = wconn.speech_to_text.recognize(
             audio=audio,
             content_type='audio/wav',
             timestamps=True,
@@ -166,129 +284,17 @@ def getTextFromSpeech():
     text_output = text_output.strip()
     return Response(response=text_output, mimetype='plain/text')
 
-def record_chat(conv_text, response_txt, entities):
-    if assistant_record_questions == 'n':
-        return
-    elif assistant_record_questions == 'u' and len(entities) <= 0:
-        return
-    with open(assistant_chatlog,'a') as fd:
-        # Watson identified, we want to know what and confidence
-        if len(entities) > 0:
-            ln = f'{conv_text},{response_txt}'
-            news = [f'{entity["entity"]}:{entity["value"]}:{entity["confidence"]}' for entity in entities]
-            ln += ',' + ','.join(news)
-        # request was unidentified, don't need to know response text
-        else:
-            ln = conv_text
 
-        ln.replace('\n', ' ')
-        ln.replace(',', '|')
-        fd.write(f'{ln}\n')
 
-#Note: this was in __main__, not a good idea, flask may not be started that way :)
 @app.before_first_request
 def before_first_request():
-    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model, last_access
-    global assitant_timeout, assistant_record_questions, assistant_chatlog
-
-    #check for mandatory configuration. flask does load_dotenv() for us
-
-    #Note: some of the  API Details supplied by IBM append the version and key details.  
-    # The IBM implemnation passes the key in as a parameter and builds up the 
-    # complete URL.  If you pass in what is supplied, version and key are  duplicated and causes 
-    # errors.  To avoid duplication and an invlaid URL,  truncate the version and everyting after it.
-
-    #Watson Assitant
-    wa_apikey = checkenv('ASSISTANT_APIKEY')
-    wa_url = checkenv('ASSISTANT_URL').split('/v')[0] #truncate version
-    assistant_id = checkenv('ASSISTANT_ID')
-    assistant_version = checkenv("ASSISTANT_VERSION")
-    authenticator = IAMAuthenticator(wa_apikey)
-    assitant_timeout = int(checkenv("ASSISTANT_TIMEOUT", 255))
-    last_access = datetime.now() - timedelta(seconds=assitant_timeout + 10)   
-    record = checkenv("ASSISTANT_RECORD", "NO").lower()
-    if record[0] in ['n', 'y', 'u']: # record n-none, y-yes to all, u- yes to unkown(Watson does not recognize)
-        assistant_record_questions = record[0]
-        assistant_chatlog = checkenv("ASSISTANT_RECORD_FILE", 'chatlog.csv')
-        Path(assistant_chatlog).touch() #if create/access problems File???Error gets raised 
-    else:
-        assistant_record_questions = 'n'
-
-
-    print('Config:')
-    print(f'   Watson version: {assistant_version} key: {wa_apikey}')
-    print(f'   Watson url: {wa_url}')
-    assistant_svc = AssistantV2( authenticator=authenticator, version=assistant_version)
-    assistant_svc.set_service_url(wa_url)
-
-    #Speech to Text
-    s2t_apikey =checkenv('SPEECH_TO_TEXT_APIKEY')
-    s2t_url = checkenv('SPEECH_TO_TEXT_URL').split('/v')[0] #truncate version
-    model = checkenv("SPEECH_TO_TEXT_MODEL", 'en-US_BroadbandModel')
-    authenticator = IAMAuthenticator(s2t_apikey)
-    speech_to_text_svc = SpeechToTextV1(authenticator)
-    speech_to_text_svc.set_service_url(s2t_url)
-
-    print(f'   speech_to_text key: {s2t_apikey}')
-    print(f'   speech_to_text url: {s2t_url}')
-
-    # Text to Speech
-    t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
-    t2s_url = checkenv('TEXT_TO_SPEECH_URL').split('/v')[0] #truncate version 
-    voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
-    authenticator = IAMAuthenticator(t2s_apikey)
-    text_to_speech_svc = TextToSpeechV1(authenticator)
-    text_to_speech_svc.set_service_url(t2s_url)
-
-    print(f'   text_to_speech key: {t2s_apikey}')
-    print(f'   text_to_speech url: {t2s_url}')
-
-    print(f'   model: {model} voice: {voice} ')
-
-# get from environment, default or exception
-def checkenv(checkfor, default=None):
-    required = os.environ.get(checkfor) or None
-    if required != None:
-        return required
-    elif default != None:
-        return default
-    raise ValueError(f'{checkfor} not found in: environment, .env or .flaskenv - Correct config')
-
-# create a new session if there, otherwise create
-def get_session():
-    global session_id, last_access, assitant_timeout
-    now = datetime.now()
-    elapsed = now - last_access
-    if elapsed.total_seconds() > assitant_timeout:
-        session_id = None   #no need to delete, its gone
-
-    last_access = now
-
-    if session_id != None:
-        return session_id
-    response = assistant_svc.create_session(assistant_id=assistant_id).get_result()
-    session_id = response['session_id']
-    print(f'Session created! {session_id}')
-    return session_id
-
-def delete_session():
-    global session_id
-    if session_id == None:
-        return
-    try:
-        assistant_svc.delete_session(
-            assistant_id=assistant_id,
-            session_id=session_id).get_result()
-        print(f'Session {session_id}deleted. Bye...')
-    except:
-        pass                    
-    session_id = None
-
+    #delayed so Flask env loaded
+    wconn.load_before()
+    wsess.load_before()
 
 
 if __name__ == "__main__":
     print('hello from __main__')
-    load_dotenv(verbose=True)
     port = os.environ.get("PORT") or os.environ.get("VCAP_APP_PORT") or 5000
     socketio.run(app, host='0.0.0.0', port=int(port))
     app.run(debug=True)
