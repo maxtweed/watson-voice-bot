@@ -183,3 +183,4 @@ pokeapi.sh
 old/app.py
 old/assistant_setup.py
 hack.py
+chatlog.csv
