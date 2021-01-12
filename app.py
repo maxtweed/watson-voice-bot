@@ -16,6 +16,7 @@
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, Response
 from flask import jsonify
@@ -43,6 +44,8 @@ model = None
 
 last_access = None   
 assitant_timeout = 255
+assistant_record_questions = False
+assistant_chatlog = ''
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -96,7 +99,7 @@ def getConvResponse():
         })
 
 
-    #print(json.dumps(response, indent=2))
+    print(json.dumps(response, indent=2))
 
     response_txt = []
     for item in response["output"]["generic"]:
@@ -107,6 +110,9 @@ def getConvResponse():
         'responseText': response_txt,
         'context': response["context"]
     }
+
+    record_chat(conv_text, response_txt, response["output"]["entities"])
+
 
     #delete session if explicit from user
     if (conv_text == "bye"):
@@ -129,7 +135,6 @@ def get_speech_from_text():
                 accept='audio/wav',
                 voice=my_voice).get_result()
 
-            print(f'audio len {len(audio_out.content)}')
             data = audio_out.content
         else:
             print("Empty response")
@@ -161,10 +166,30 @@ def getTextFromSpeech():
     text_output = text_output.strip()
     return Response(response=text_output, mimetype='plain/text')
 
+def record_chat(conv_text, response_txt, entities):
+    if assistant_record_questions == 'n':
+        return
+    elif assistant_record_questions == 'u' and len(entities) <= 0:
+        return
+    with open(assistant_chatlog,'a') as fd:
+        # Watson identified, we want to know what and confidence
+        if len(entities) > 0:
+            ln = f'{conv_text},{response_txt}'
+            news = [f'{entity["entity"]}:{entity["value"]}:{entity["confidence"]}' for entity in entities]
+            ln += ',' + ','.join(news)
+        # request was unidentified, don't need to know response text
+        else:
+            ln = conv_text
+
+        ln.replace('\n', ' ')
+        ln.replace(',', '|')
+        fd.write(f'{ln}\n')
+
 #Note: this was in __main__, not a good idea, flask may not be started that way :)
 @app.before_first_request
 def before_first_request():
-    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model, last_access, assitant_timeout
+    global assistant_svc, assistant_id, speech_to_text_svc, text_to_speech_svc, voice, model, last_access
+    global assitant_timeout, assistant_record_questions, assistant_chatlog
 
     #check for mandatory configuration. flask does load_dotenv() for us
 
@@ -181,6 +206,13 @@ def before_first_request():
     authenticator = IAMAuthenticator(wa_apikey)
     assitant_timeout = int(checkenv("ASSISTANT_TIMEOUT", 255))
     last_access = datetime.now() - timedelta(seconds=assitant_timeout + 10)   
+    record = checkenv("ASSISTANT_RECORD", "NO").lower()
+    if record[0] in ['n', 'y', 'u']: # record n-none, y-yes to all, u- yes to unkown(Watson does not recognize)
+        assistant_record_questions = record[0]
+        assistant_chatlog = checkenv("ASSISTANT_RECORD_FILE", 'chatlog.csv')
+        Path(assistant_chatlog).touch() #if create/access problems File???Error gets raised 
+    else:
+        assistant_record_questions = 'n'
 
 
     print('Config:')
@@ -230,6 +262,7 @@ def get_session():
     if elapsed.total_seconds() > assitant_timeout:
         session_id = None   #no need to delete, its gone
 
+    last_access = now
 
     if session_id != None:
         return session_id
