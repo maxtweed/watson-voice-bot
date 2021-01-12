@@ -48,7 +48,7 @@ class WatsonConnector:
     def __init__(self):
         pass #do it all after Flask loaded, .flaskenv pulled in
 
-    def load_before(self):
+    def before_first_request(self):
         #check for mandatory configuration. 
 
         #Note: some of the  API Details supplied by IBM append the version and key details.  
@@ -71,10 +71,7 @@ class WatsonConnector:
             self.record_questions = 'n'
 
 
-        print('Config:')
-        print(f'   Watson version: {self.assistant_version} key: {self.wa_apikey}')
-        print(f'   Watson url: {self.wa_url}')
-        self.assistant_api = AssistantV2( authenticator=authenticator, version=self.assistant_version)
+        self.assistant_api = AssistantV2(authenticator=authenticator, version=self.assistant_version)
         self.assistant_api.set_service_url(self.wa_url)
 
         #Speech to Text
@@ -84,8 +81,6 @@ class WatsonConnector:
         self.speech_to_text = SpeechToTextV1(authenticator)
         self.speech_to_text.set_service_url(self.s2t_url)
 
-        print(f'   speech_to_text key: {self.s2t_apikey}')
-        print(f'   speech_to_text url: {self.s2t_url}')
 
         # Text to Speech
         self.t2s_apikey = checkenv('TEXT_TO_SPEECH_APIKEY')
@@ -94,11 +89,13 @@ class WatsonConnector:
         self.text_to_speech = TextToSpeechV1(authenticator)
         self.text_to_speech.set_service_url(self.t2s_url)
 
+        print('Config:')
+        print(f'   Watson key: {self.wa_apikey}  version: {self.assistant_version} ')
+        print(f'   Watson url: {self.wa_url}')
+        print(f'   speech_to_text key: {self.s2t_apikey}')
+        print(f'   speech_to_text url: {self.s2t_url}')
         print(f'   text_to_speech key: {self.t2s_apikey}')
         print(f'   text_to_speech url: {self.t2s_url}')
-
-
-
 
     def record_chat(self, conv_text, response_txt, entities):
         if self.record_questions == 'n':
@@ -111,6 +108,7 @@ class WatsonConnector:
                 ln = f'{conv_text},{response_txt}'
                 news = [f'{entity["entity"]}:{entity["value"]}:{entity["confidence"]}' for entity in entities]
                 ln += ',' + ','.join(news)
+                print(ln)
             # request was unidentified, don't need to know response text
             else:
                 ln = conv_text
@@ -130,7 +128,7 @@ class WatsonSession:
         self.session_id = None
         pass #do rest after Flask loaded, .flaskenv pulled in
 
-    def load_before(self):
+    def before_first_request(self):
         self.timeout = int(checkenv("ASSISTANT_TIMEOUT", 255))
         self.last_access = datetime.now() - timedelta(seconds=self.timeout + 10)   
         self.voice = checkenv("TEXT_TO_SPEECH_VOICE", 'en-US_AllisonVoice')
@@ -289,8 +287,8 @@ def getTextFromSpeech():
 @app.before_first_request
 def before_first_request():
     #delayed so Flask env loaded
-    wconn.load_before()
-    wsess.load_before()
+    wconn.before_first_request()
+    wsess.before_first_request()
 
 
 if __name__ == "__main__":
