@@ -23,11 +23,8 @@ from flask import jsonify
 from flask import request, redirect
 from flask_socketio import SocketIO
 from flask_cors import CORS
-#new for V2 vvvvv
 from ibm_watson import AssistantV2
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
-#new for V2 ^^^^^
-#speech-text APIS are still at V1 for now
 from ibm_watson import SpeechToTextV1
 from ibm_watson import TextToSpeechV1
 
@@ -42,7 +39,7 @@ def checkenv(checkfor, default=None):
 
 '''
 WatsonConnector ia a collection of API objects and a chat recorder utility.
-The API objects are shared by all users you may have
+The API objects are shared by all users you may have.  No session data
 '''
 class WatsonConnector:
     def __init__(self):
@@ -69,7 +66,6 @@ class WatsonConnector:
             Path(self.chatlog).touch() #if create/access problems File???Error gets raised now
         else:
             self.record_questions = 'n'
-
 
         self.assistant_api = AssistantV2(authenticator=authenticator, version=self.assistant_version)
         self.assistant_api.set_service_url(self.wa_url)
@@ -119,7 +115,8 @@ class WatsonConnector:
 
 '''
 WatsonSession is a long running session between a specific user and the Watson Assistant.
-The sessions have context and timpout logic
+The sessions have context and timpout logic.  The Watson Assitant has sessions, the 
+speech APIs do not.
 '''
 
 class WatsonSession:
